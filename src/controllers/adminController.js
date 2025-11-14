@@ -4,6 +4,15 @@ const AcademicInfo = require('../models/AcademicInfo');
 const { generateToken } = require('../utils/jwt');
 const { generateOTP, setOTPExpiry } = require('../utils/otpGenerator');
 const { sendOTPEmail } = require('../services/emailService');
+const { getStudentsWithDetailsOptimized, getStudentByIdOptimized } = require('../helpers/queryOptimizer');
+const { asyncHandler } = require('../middleware/errorHandler');
+const {
+  HTTP_STATUS,
+  SUCCESS_MESSAGES,
+  ERROR_MESSAGES,
+  sendSuccess,
+  sendError,
+} = require('../constants/statusCodes');
 
 // Super Admin creates Admin
 const createAdmin = async (req, res) => {
@@ -99,100 +108,28 @@ const adminLogin = async (req, res) => {
   }
 };
 
-// Get all students list
-const getAllStudents = async (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const skip = (page - 1) * limit;
+// Get all students list (Optimized with aggregation)
+const getAllStudents = asyncHandler(async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = Math.min(parseInt(req.query.limit) || 10, 50); // Max 50 per page
 
-    // Get all students with their profiles and academic info
-    const students = await User.find({ role: 'student' })
-      .select('-password -otp')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
+  const result = await getStudentsWithDetailsOptimized(User, Profile, AcademicInfo, page, limit);
 
-    const total = await User.countDocuments({ role: 'student' });
+  return sendSuccess(res, SUCCESS_MESSAGES.STUDENTS_FETCHED, result);
+});
 
-    // Get profiles and academic info for each student
-    const studentsWithDetails = await Promise.all(
-      students.map(async (student) => {
-        const profile = await Profile.findOne({ userId: student._id });
-        const academicInfo = await AcademicInfo.findOne({ userId: student._id });
+// Get single student details (Optimized with aggregation)
+const getStudentById = asyncHandler(async (req, res) => {
+  const { studentId } = req.params;
 
-        return {
-          id: student._id,
-          email: student.email,
-          isVerified: student.isVerified,
-          createdAt: student.createdAt,
-          profile: profile || null,
-          academicInfo: academicInfo || null,
-        };
-      })
-    );
-
-    res.status(200).json({
-      success: true,
-      data: {
-        students: studentsWithDetails,
-        pagination: {
-          currentPage: page,
-          totalPages: Math.ceil(total / limit),
-          totalStudents: total,
-          limit,
-        },
-      },
-    });
-  } catch (error) {
-    console.error('Get all students error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch students',
-      error: error.message,
-    });
+  const student = await getStudentByIdOptimized(User, Profile, AcademicInfo, studentId);
+  
+  if (!student) {
+    return sendError(res, ERROR_MESSAGES.STUDENT_FETCH_FAILED, HTTP_STATUS.NOT_FOUND);
   }
-};
 
-// Get single student details
-const getStudentById = async (req, res) => {
-  try {
-    const { studentId } = req.params;
-
-    const student = await User.findOne({ _id: studentId, role: 'student' }).select('-password -otp');
-    
-    if (!student) {
-      return res.status(404).json({
-        success: false,
-        message: 'Student not found',
-      });
-    }
-
-    const profile = await Profile.findOne({ userId: student._id });
-    const academicInfo = await AcademicInfo.findOne({ userId: student._id });
-
-    res.status(200).json({
-      success: true,
-      data: {
-        student: {
-          id: student._id,
-          email: student.email,
-          isVerified: student.isVerified,
-          createdAt: student.createdAt,
-          profile: profile || null,
-          academicInfo: academicInfo || null,
-        },
-      },
-    });
-  } catch (error) {
-    console.error('Get student by ID error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch student',
-      error: error.message,
-    });
-  }
-};
+  return sendSuccess(res, SUCCESS_MESSAGES.STUDENT_FETCHED, { student });
+});
 
 module.exports = {
   createAdmin,

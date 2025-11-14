@@ -18,14 +18,16 @@ const {
   verifyPasswordResetOTPValidator,
   resetPasswordValidator,
 } = require('../validators/authValidator');
+const { authLimiter, otpLimiter } = require('../middleware/rateLimiter');
 
-router.post('/register', registerValidator, register);
-router.post('/verify-otp', verifyOTPValidator, verifyOTP);
-router.post('/resend-otp', resendOTPValidator, resendOTP);
-router.post('/login', loginValidator, login);
-router.post('/forgot-password', forgotPasswordValidator, forgotPassword);
-router.post('/verify-password-reset-otp', verifyPasswordResetOTPValidator, verifyPasswordResetOTP);
-router.post('/reset-password', resetPasswordValidator, resetPassword);
+// Apply rate limiting
+router.post('/register', authLimiter, registerValidator, register);
+router.post('/verify-otp', otpLimiter, verifyOTPValidator, verifyOTP);
+router.post('/resend-otp', otpLimiter, resendOTPValidator, resendOTP);
+router.post('/login', authLimiter, loginValidator, login);
+router.post('/forgot-password', otpLimiter, forgotPasswordValidator, forgotPassword);
+router.post('/verify-password-reset-otp', otpLimiter, verifyPasswordResetOTPValidator, verifyPasswordResetOTP);
+router.post('/reset-password', authLimiter, resetPasswordValidator, resetPassword);
 
 module.exports = router;
 

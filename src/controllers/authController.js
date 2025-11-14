@@ -2,6 +2,13 @@ const User = require('../models/User');
 const { generateOTP, setOTPExpiry } = require('../utils/otpGenerator');
 const { sendOTPEmail, sendPasswordResetOTPEmail } = require('../services/emailService');
 const { generateToken } = require('../utils/jwt');
+const {
+  HTTP_STATUS,
+  SUCCESS_MESSAGES,
+  ERROR_MESSAGES,
+  sendSuccess,
+  sendError,
+} = require('../constants/statusCodes');
 
 const register = async (req, res) => {
   try {
@@ -9,10 +16,7 @@ const register = async (req, res) => {
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        message: 'User already exists with this email',
-      });
+      return sendError(res, ERROR_MESSAGES.USER_ALREADY_EXISTS, HTTP_STATUS.CONFLICT);
     }
 
     const otp = generateOTP();
@@ -33,29 +37,16 @@ const register = async (req, res) => {
     try {
       const emailSent = await sendOTPEmail(email, otp);
       if (!emailSent) {
-        return res.status(500).json({
-          success: false,
-          message: 'Failed to send OTP email',
-        });
+        return sendError(res, ERROR_MESSAGES.EMAIL_SEND_FAILED, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: error.message || 'Failed to send OTP email. Please check your SMTP configuration.',
-      });
+      return sendError(res, error.message || ERROR_MESSAGES.SMTP_CONFIG_ERROR, HTTP_STATUS.INTERNAL_SERVER_ERROR);
     }
 
-    res.status(201).json({
-      success: true,
-      message: 'Registration successful. Please check your email for OTP verification.',
-    });
+    return sendSuccess(res, SUCCESS_MESSAGES.REGISTRATION_SUCCESS, null, HTTP_STATUS.CREATED);
   } catch (error) {
     console.error('Registration error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Registration failed',
-      error: error.message,
-    });
+    return sendError(res, ERROR_MESSAGES.REGISTRATION_FAILED, HTTP_STATUS.INTERNAL_SERVER_ERROR);
   }
 };
 
@@ -65,31 +56,19 @@ const verifyOTP = async (req, res) => {
 
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found',
-      });
+      return sendError(res, ERROR_MESSAGES.USER_NOT_FOUND, HTTP_STATUS.NOT_FOUND);
     }
 
     if (user.isVerified) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email already verified',
-      });
+      return sendError(res, ERROR_MESSAGES.EMAIL_ALREADY_VERIFIED, HTTP_STATUS.BAD_REQUEST);
     }
 
     if (!user.otp || user.otp.code !== otp) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid OTP',
-      });
+      return sendError(res, ERROR_MESSAGES.INVALID_OTP, HTTP_STATUS.BAD_REQUEST);
     }
 
     if (new Date() > user.otp.expiresAt) {
-      return res.status(400).json({
-        success: false,
-        message: 'OTP has expired',
-      });
+      return sendError(res, ERROR_MESSAGES.OTP_EXPIRED, HTTP_STATUS.BAD_REQUEST);
     }
 
     user.isVerified = true;
@@ -98,9 +77,7 @@ const verifyOTP = async (req, res) => {
 
     const token = generateToken(user._id, user.role);
 
-    res.status(200).json({
-      success: true,
-      message: 'Email verified successfully',
+    return sendSuccess(res, SUCCESS_MESSAGES.OTP_VERIFIED, {
       token,
       user: {
         id: user._id,
@@ -110,11 +87,7 @@ const verifyOTP = async (req, res) => {
     });
   } catch (error) {
     console.error('OTP verification error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'OTP verification failed',
-      error: error.message,
-    });
+    return sendError(res, ERROR_MESSAGES.OPERATION_FAILED, HTTP_STATUS.INTERNAL_SERVER_ERROR);
   }
 };
 
@@ -124,40 +97,26 @@ const login = async (req, res) => {
 
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid email or password',
-      });
+      return sendError(res, ERROR_MESSAGES.INVALID_EMAIL_PASSWORD, HTTP_STATUS.UNAUTHORIZED);
     }
 
     if (!user.isVerified) {
-      return res.status(401).json({
-        success: false,
-        message: 'Please verify your email first',
-      });
+      return sendError(res, ERROR_MESSAGES.EMAIL_NOT_VERIFIED, HTTP_STATUS.UNAUTHORIZED);
     }
 
     const isPasswordValid = await user.comparePassword(password);
     if (!isPasswordValid) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid email or password',
-      });
+      return sendError(res, ERROR_MESSAGES.INVALID_EMAIL_PASSWORD, HTTP_STATUS.UNAUTHORIZED);
     }
 
     // For students, check if email is verified
     if (user.role === 'student' && !user.isVerified) {
-      return res.status(401).json({
-        success: false,
-        message: 'Please verify your email first',
-      });
+      return sendError(res, ERROR_MESSAGES.EMAIL_NOT_VERIFIED, HTTP_STATUS.UNAUTHORIZED);
     }
 
     const token = generateToken(user._id, user.role);
 
-    res.status(200).json({
-      success: true,
-      message: 'Login successful',
+    return sendSuccess(res, SUCCESS_MESSAGES.LOGIN_SUCCESS, {
       token,
       user: {
         id: user._id,
@@ -167,11 +126,7 @@ const login = async (req, res) => {
     });
   } catch (error) {
     console.error('Login error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Login failed',
-      error: error.message,
-    });
+    return sendError(res, ERROR_MESSAGES.OPERATION_FAILED, HTTP_STATUS.INTERNAL_SERVER_ERROR);
   }
 };
 
@@ -181,17 +136,11 @@ const resendOTP = async (req, res) => {
 
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found',
-      });
+      return sendError(res, ERROR_MESSAGES.USER_NOT_FOUND, HTTP_STATUS.NOT_FOUND);
     }
 
     if (user.isVerified) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email already verified',
-      });
+      return sendError(res, ERROR_MESSAGES.EMAIL_ALREADY_VERIFIED, HTTP_STATUS.BAD_REQUEST);
     }
 
     // Generate new OTP
@@ -208,29 +157,16 @@ const resendOTP = async (req, res) => {
     try {
       const emailSent = await sendOTPEmail(email, otp);
       if (!emailSent) {
-        return res.status(500).json({
-          success: false,
-          message: 'Failed to send OTP email',
-        });
+        return sendError(res, ERROR_MESSAGES.EMAIL_SEND_FAILED, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: error.message || 'Failed to send OTP email. Please check your SMTP configuration.',
-      });
+      return sendError(res, error.message || ERROR_MESSAGES.SMTP_CONFIG_ERROR, HTTP_STATUS.INTERNAL_SERVER_ERROR);
     }
 
-    res.status(200).json({
-      success: true,
-      message: 'OTP has been resent to your email. Please check your inbox.',
-    });
+    return sendSuccess(res, SUCCESS_MESSAGES.OTP_RESENT);
   } catch (error) {
     console.error('Resend OTP error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to resend OTP',
-      error: error.message,
-    });
+    return sendError(res, ERROR_MESSAGES.OPERATION_FAILED, HTTP_STATUS.INTERNAL_SERVER_ERROR);
   }
 };
 
@@ -241,18 +177,12 @@ const forgotPassword = async (req, res) => {
     const user = await User.findOne({ email });
     if (!user) {
       // Don't reveal if user exists or not for security
-      return res.status(200).json({
-        success: true,
-        message: 'If an account exists with this email, a password reset OTP has been sent.',
-      });
+      return sendSuccess(res, 'If an account exists with this email, a password reset OTP has been sent.');
     }
 
     // Only allow password reset for verified users
     if (!user.isVerified) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please verify your email first before resetting password',
-      });
+      return sendError(res, ERROR_MESSAGES.PASSWORD_RESET_EMAIL_NOT_VERIFIED, HTTP_STATUS.BAD_REQUEST);
     }
 
     // Generate password reset OTP
@@ -269,29 +199,16 @@ const forgotPassword = async (req, res) => {
     try {
       const emailSent = await sendPasswordResetOTPEmail(email, otp);
       if (!emailSent) {
-        return res.status(500).json({
-          success: false,
-          message: 'Failed to send password reset OTP email',
-        });
+        return sendError(res, ERROR_MESSAGES.EMAIL_SEND_FAILED_PASSWORD_RESET, HTTP_STATUS.INTERNAL_SERVER_ERROR);
       }
     } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: error.message || 'Failed to send password reset OTP email. Please check your SMTP configuration.',
-      });
+      return sendError(res, error.message || ERROR_MESSAGES.SMTP_CONFIG_ERROR, HTTP_STATUS.INTERNAL_SERVER_ERROR);
     }
 
-    res.status(200).json({
-      success: true,
-      message: 'Password reset OTP has been sent to your email. Please check your inbox.',
-    });
+    return sendSuccess(res, SUCCESS_MESSAGES.PASSWORD_RESET_REQUESTED);
   } catch (error) {
     console.error('Forgot password error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to process password reset request',
-      error: error.message,
-    });
+    return sendError(res, ERROR_MESSAGES.OPERATION_FAILED, HTTP_STATUS.INTERNAL_SERVER_ERROR);
   }
 };
 
@@ -301,38 +218,22 @@ const verifyPasswordResetOTP = async (req, res) => {
 
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found',
-      });
+      return sendError(res, ERROR_MESSAGES.USER_NOT_FOUND, HTTP_STATUS.NOT_FOUND);
     }
 
     if (!user.passwordResetOTP || user.passwordResetOTP.code !== otp) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid OTP',
-      });
+      return sendError(res, ERROR_MESSAGES.INVALID_OTP, HTTP_STATUS.BAD_REQUEST);
     }
 
     if (new Date() > user.passwordResetOTP.expiresAt) {
-      return res.status(400).json({
-        success: false,
-        message: 'OTP has expired. Please request a new password reset.',
-      });
+      return sendError(res, ERROR_MESSAGES.OTP_EXPIRED_RESEND, HTTP_STATUS.BAD_REQUEST);
     }
 
     // OTP is valid, return success (password reset will happen in next step)
-    res.status(200).json({
-      success: true,
-      message: 'OTP verified successfully. You can now reset your password.',
-    });
+    return sendSuccess(res, SUCCESS_MESSAGES.PASSWORD_RESET_OTP_VERIFIED);
   } catch (error) {
     console.error('Verify password reset OTP error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'OTP verification failed',
-      error: error.message,
-    });
+    return sendError(res, ERROR_MESSAGES.OPERATION_FAILED, HTTP_STATUS.INTERNAL_SERVER_ERROR);
   }
 };
 
@@ -342,24 +243,15 @@ const resetPassword = async (req, res) => {
 
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found',
-      });
+      return sendError(res, ERROR_MESSAGES.USER_NOT_FOUND, HTTP_STATUS.NOT_FOUND);
     }
 
     if (!user.passwordResetOTP || user.passwordResetOTP.code !== otp) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid OTP',
-      });
+      return sendError(res, ERROR_MESSAGES.INVALID_OTP, HTTP_STATUS.BAD_REQUEST);
     }
 
     if (new Date() > user.passwordResetOTP.expiresAt) {
-      return res.status(400).json({
-        success: false,
-        message: 'OTP has expired. Please request a new password reset.',
-      });
+      return sendError(res, ERROR_MESSAGES.OTP_EXPIRED_RESEND, HTTP_STATUS.BAD_REQUEST);
     }
 
     // Update password
@@ -367,17 +259,10 @@ const resetPassword = async (req, res) => {
     user.passwordResetOTP = undefined;
     await user.save();
 
-    res.status(200).json({
-      success: true,
-      message: 'Password has been reset successfully. You can now login with your new password.',
-    });
+    return sendSuccess(res, SUCCESS_MESSAGES.PASSWORD_RESET_SUCCESS);
   } catch (error) {
     console.error('Reset password error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to reset password',
-      error: error.message,
-    });
+    return sendError(res, ERROR_MESSAGES.OPERATION_FAILED, HTTP_STATUS.INTERNAL_SERVER_ERROR);
   }
 };
 
